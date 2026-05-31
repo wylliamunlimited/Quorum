@@ -27,6 +27,62 @@ The reconciliation is the "why multi-agent": e.g. Risk flags a `DROP TABLE` as d
 
 ---
 
+## Agent flow
+
+```mermaid
+flowchart TD
+    CC["Claude Code / CLI<br/>(MCP tool · ExitPlanMode hook)"]
+    PLAN["plan.md"]
+    LOCAL["inputs/expectations/*.md"]
+    JIRA[("Jira server<br/>/rest/api/3/search")]
+    FARM["Requirement Farmer<br/>distil verified requirements"]
+    ARB{{"Arbiter<br/>suppress · keep · escalate · re-evaluate"}}
+    LOOP["route question + cross-context<br/>to ONE specialist"]
+    BACK["guardrail + authorization backstop<br/>destructive ops need a cited authorization"]
+    QUEUE["Decision queue<br/>needs your decision (+ proposed fixes) · auto-cleared"]
+
+    CC -->|plan| PLAN
+    LOCAL --> FARM
+    JIRA --> FARM
+
+    subgraph PANEL["Specialist panel — parallel, independent"]
+      RISK["Risk<br/>destructive ops"]
+      EDGE["EdgeCase<br/>unhandled states"]
+      EXP["Expectation (act)<br/>doc violations + proposed fix"]
+    end
+
+    PLAN --> RISK
+    PLAN --> EDGE
+    PLAN --> EXP
+    FARM -->|requirements| EXP
+
+    RISK --> ARB
+    EDGE --> ARB
+    EXP --> ARB
+
+    ARB -->|"contested · up to 3 rounds"| LOOP
+    LOOP -.-> PANEL
+    ARB -->|"converged / cap"| BACK
+    BACK --> QUEUE
+    QUEUE -->|clarifications| CC
+
+    classDef src fill:#eef2ff,stroke:#6b7cff,color:#1a1a1a;
+    classDef agent fill:#e8f0fe,stroke:#4285f4,color:#1a1a1a;
+    classDef arbiter fill:#fce8e6,stroke:#ea4335,color:#1a1a1a;
+    classDef out fill:#e6f4ea,stroke:#34a853,color:#1a1a1a;
+    class LOCAL,JIRA,FARM src;
+    class RISK,EDGE,EXP agent;
+    class ARB,LOOP,BACK arbiter;
+    class QUEUE out;
+```
+
+- **Source** → local `.md` files or the Jira server feed the **Requirement Farmer**.
+- **Panel** runs the three specialists in parallel; only Expectation gets the farmed requirements.
+- **Arbiter** reconciles, and routes *contested* items back to one specialist (up to 3 rounds) before committing.
+- **Backstop** guarantees no destructive op is silently cleared, then the **decision queue** (with proposed fixes) goes back to the caller.
+
+---
+
 ## The agents
 
 | Agent | Job (and *only* this) | Model | Input |
