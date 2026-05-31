@@ -10,6 +10,8 @@ Inspect locally:        uv run mcp dev quorum_mcp.py
 Register with Claude:   claude mcp add quorum -- uv run --directory <abs-path> quorum_mcp.py
 """
 
+import sys
+
 from mcp.server.fastmcp import FastMCP
 
 import config
@@ -40,15 +42,18 @@ async def review_plan(plan: str, expectations_dir: str | None = None) -> str:
     Args:
         plan: the proposed plan as markdown text.
         expectations_dir: optional path to a folder of product docs
-            (tickets/notes as *.md) to check the plan against. Defaults to
-            Quorum's bundled demo docs; pass the target repo's
-            ".quorum/expectations" to review against its real requirements.
+            (tickets/notes as *.md). If given, it overrides the configured
+            source. If omitted, requirements come from the configured source —
+            local files or the Jira server ($QUORUM_EXPECTATIONS_SOURCE).
     """
-    try:
-        docs = load_expectations(expectations_dir or config.EXPECTATIONS_DIR)
-    except Exception as e:
-        docs = {}
-        print(f"[quorum-mcp] could not load expectations ({e}); reviewing without docs.")
+    if expectations_dir:
+        try:
+            docs = load_expectations(expectations_dir)
+        except Exception as e:  # bad dir -> fall back to the configured source
+            print(f"[quorum-mcp] could not load {expectations_dir} ({e})", file=sys.stderr)
+            docs = None
+    else:
+        docs = None  # let run_quorum resolve the configured source (local or jira)
 
     result = await run_quorum(plan, docs)
     return render_decision_queue(result["arbiter"])

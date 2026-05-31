@@ -8,9 +8,11 @@ reconciliation, the per-round re-evaluation history, and a lifecycle summary of
 each contested item.
 """
 
+import argparse
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 
 import config
@@ -19,8 +21,10 @@ from quorum import _section_key, run_quorum
 from render import render_decision_queue
 
 
-def load_plan(path: str = config.PLAN_PATH) -> str:
-    return Path(path).read_text(encoding="utf-8")
+def load_plan(path: str | None = None) -> str:
+    if path == "-":
+        return sys.stdin.read()
+    return Path(path or config.PLAN_PATH).read_text(encoding="utf-8")
 
 
 def load_expectations(directory: str = config.EXPECTATIONS_DIR) -> dict[str, str]:
@@ -31,13 +35,37 @@ def load_expectations(directory: str = config.EXPECTATIONS_DIR) -> dict[str, str
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser(description="Run the Quorum plan review.")
+    ap.add_argument("--plan", default=None,
+                    help="plan markdown file, or '-' for stdin (default: inputs/plan.md)")
+    ap.add_argument("--expectations", default=None,
+                    help="expectations docs dir (forces the local source)")
+    ap.add_argument("--source", choices=["local", "jira"], default=None,
+                    help="where to get requirements (default: $QUORUM_EXPECTATIONS_SOURCE or local)")
+    ap.add_argument("--jira-url", default=None,
+                    help="base URL of the Jira server when --source jira")
+    ap.add_argument("--jira-project", default=None,
+                    help="Jira project key to fetch when --source jira (e.g. AUTH, AIBIO)")
+    args = ap.parse_args()
+
+    if args.source:
+        config.EXPECTATIONS_SOURCE = args.source
+    if args.jira_url:
+        config.JIRA_BASE_URL = args.jira_url
+    if args.jira_project:
+        config.JIRA_PROJECT = args.jira_project
+
     tracing.init(config.WEAVE_PROJECT)
 
-    plan = load_plan()
-    expectations = load_expectations()
+    plan = load_plan(args.plan)
+    # An explicit --expectations dir bypasses the resolver; otherwise run_quorum
+    # resolves from the configured source (local files or the Jira server).
+    expectations = load_expectations(args.expectations) if args.expectations else None
 
     result = asyncio.run(run_quorum(plan, expectations))
 
+    # The decision queue is the ONLY thing on stdout (status goes to stderr),
+    # so callers like the plan-review hook can capture it cleanly.
     print(render_decision_queue(result["arbiter"]))
 
     if os.environ.get("QUORUM_DEBUG"):

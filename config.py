@@ -32,3 +32,10 @@ MAX_ROUNDS = 3
 # --- Input paths ----------------------------------------------------------
 PLAN_PATH = "inputs/plan.md"
 EXPECTATIONS_DIR = "inputs/expectations"
+
+# --- Expectation source ---------------------------------------------------
+# Where the farm-stage gets its requirements: "local" (read EXPECTATIONS_DIR)
+# or "jira" (fetch from the Jira-shaped server). Overridable via env / CLI.
+EXPECTATIONS_SOURCE = os.environ.get("QUORUM_EXPECTATIONS_SOURCE", "local")
+JIRA_BASE_URL = os.environ.get("QUORUM_JIRA_URL", "http://127.0.0.1:8000")
+JIRA_PROJECT = os.environ.get("QUORUM_JIRA_PROJECT", "AUTH")

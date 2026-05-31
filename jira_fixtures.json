@@ -1,0 +1,74 @@
+{
+  "issues": [
+    {
+      "key": "AUTH-101",
+      "fields": {
+        "summary": "People need to trust us with their password",
+        "issuetype": { "name": "Story" },
+        "status": { "name": "In Progress" },
+        "priority": { "name": "High" },
+        "description": "As someone signing up, I want my password to stay safe even if the company is breached, so that one leak can't cascade into the rest of my life.\n\nAcceptance criteria:\n- Stored passwords must be protected with the modern industry standard for passwords (a deliberately slow approach).\n- A fast/simple checksum (e.g. SHA-256 or MD5) is NOT acceptable for password storage.\n- Even if the user database leaks, attackers must not be able to recover or reuse the actual passwords."
+      }
+    },
+    {
+      "key": "AUTH-102",
+      "fields": {
+        "summary": "A forgotten login shouldn't haunt you",
+        "issuetype": { "name": "Story" },
+        "status": { "name": "To Do" },
+        "priority": { "name": "Medium" },
+        "description": "As someone who sometimes logs in from a shared or public computer, I want my session to not stay open forever, so that a forgotten login can't be hijacked later.\n\nAcceptance criteria:\n- A login session must expire on its own after about a day (~24h).\n- An expired session simply means logging in again.\n- A 'remember me' / refresh-token flow is out of scope this round."
+      }
+    },
+    {
+      "key": "AUTH-103",
+      "fields": {
+        "summary": "Beta users must not lose their accounts",
+        "issuetype": { "name": "Story" },
+        "status": { "name": "To Do" },
+        "priority": { "name": "High" },
+        "description": "As a long-time beta user, I want to keep my existing account after the login update, so that I don't have to start over or wonder if my data is gone.\n\nAcceptance criteria:\n- The auth migration must be non-destructive.\n- Existing user rows must be preserved; do NOT drop and recreate the users table.\n- There are ~4,000 real beta accounts today; losing any of them is a launch-blocker."
+      }
+    },
+    {
+      "key": "AUTH-104",
+      "fields": {
+        "summary": "Backend sync — auth rollout notes",
+        "issuetype": { "name": "Note" },
+        "status": { "name": "Done" },
+        "priority": { "name": "Low" },
+        "description": "Loose notes from the backend sync, mostly auth:\n- Beta users cannot lose their accounts during the rollout — launch-blocker (see AUTH-103).\n- Passwords get bcrypt, not a homegrown/SHA approach; the room agreed SHA is not acceptable for passwords.\n- Keep sessions short-lived (~24h), skip refresh tokens for now (see AUTH-102).\n- Cleanup we agreed on: DROP the old, unused `temp_tokens` table this sprint. The prototype that wrote to it was removed months ago and nothing reads from it now — safe to remove.\n- Demo is Friday; keep scope tight."
+      }
+    },
+    {
+      "key": "AIBIO-101",
+      "fields": {
+        "summary": "A submission that actually counts",
+        "issuetype": { "name": "Story" },
+        "status": { "name": "In Progress" },
+        "priority": { "name": "High" },
+        "description": "As the team, we want our submission scored correctly, so a last-minute formatting slip doesn't throw away a day of work.\n\nAcceptance criteria:\n- Final predictions are saved as outputs/predictions.parquet — parquet, NOT csv.\n- Columns are exactly: compound, gene_id, predicted_l2fc.\n- Every test compound and every scored gene is covered — no dropped rows.\n- No NaN or inf values anywhere in the predictions.\n- The already-validated baseline submission is kept as a fallback — do not overwrite outputs/predictions.parquet in place until a new file passes validate_submission()."
+      }
+    },
+    {
+      "key": "AIBIO-102",
+      "fields": {
+        "summary": "A validation score we can actually trust",
+        "issuetype": { "name": "Story" },
+        "status": { "name": "To Do" },
+        "priority": { "name": "High" },
+        "description": "As the team, we want our validation score to reflect real generalization to structurally novel compounds, so we don't ship a worse model because its score looked good.\n\nAcceptance criteria:\n- Train/validation splits are compound-stratified: the same compound never appears in both train and validation (no compound leakage).\n- Feature scalers, PCA, and any fitting are learned on train only — never fit on the validation set.\n- The reported wMSE is measured on a compound-disjoint validation set."
+      }
+    },
+    {
+      "key": "AIBIO-103",
+      "fields": {
+        "summary": "Team sync — crunch-time notes",
+        "issuetype": { "name": "Note" },
+        "status": { "name": "Done" },
+        "priority": { "name": "Low" },
+        "description": "Crunch-time notes, mostly about not shooting ourselves in the foot:\n- Submission paranoia: we already emailed the Ridge baseline parquet as a safety net. Do NOT overwrite outputs/predictions.parquet in place — write new predictions to a fresh filename and only replace the baseline after it passes validate_submission().\n- Validation honesty: a plain random split leaks compounds (same drug in train and val) and inflates the score; all splits must be compound-stratified.\n- Cleanup that's fine: it's safe to delete the old notebook autosave backups (vcpi_solution.ipynb.bak*) — they're just clutter, nobody needs them.\n- Hands off the data cache: do NOT wipe or re-download the VCPI data in data/ — it took forever to pull.\n- Submit before 4:30 PM, don't cut it close."
+      }
+    }
+  ]
+}

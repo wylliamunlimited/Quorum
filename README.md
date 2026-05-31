@@ -110,6 +110,21 @@ plan ─────────────────────────
 
 **Why it improves accuracy:** separating *establish a verified fact* from *act on it* — and forcing the act-stage to cite the farmed requirement — constrains the judgment to a checkable premise (the same principle as the authorization backstop). Judging *per requirement* also improves coverage. The **proposed fix** is stitched onto the surfaced item in code (`_attach_proposed_fixes`, matched by `plan_section` and gated to Expectation-raised items) so it can't be lost or mis-paired in reconciliation.
 
+### Requirement sources: local files or Jira
+
+The farm-stage's input is pluggable (`resolve_expectations` in `quorum.py`):
+
+- **`local`** (default) — read the `*.md` docs in `inputs/expectations/`.
+- **`jira`** — fetch issues from a Jira-shaped API. `jira_server.py` is a dummy server (Starlette) that serves `jira_fixtures.json` at the real `GET /rest/api/3/search` endpoint; `agents/jira_source.py` pulls the issues and flattens them to the same `{key: text}` dict the farmer eats. Because the authorization backstop keys off that dict, suppression still works (a `Note`-type issue stands in for meeting notes).
+
+```bash
+uv run jira_server.py &                 # dummy Jira on :8000
+uv run main.py --source jira            # farm requirements from Jira instead of files
+# or: QUORUM_EXPECTATIONS_SOURCE=jira QUORUM_JIRA_URL=... uv run main.py
+```
+
+Selectable and additive — `uv run main.py` with no flags is unchanged. `--source jira` reproduces the local demo's catches, with requirement `source`s shown as issue keys (`AUTH-101`…).
+
 ---
 
 ## Setup
@@ -173,6 +188,16 @@ uv run python -c "import asyncio; from quorum_mcp import review_plan; from main 
 
 > A full review is ~30–90s (farm + panel + re-eval rounds) — fine for a prototype; a single-pass `fast` mode is a noted follow-up.
 
+### Auto-review on every plan (hook)
+
+For hands-off review, a **`PreToolUse` hook on `ExitPlanMode`** runs the panel automatically whenever Claude presents a plan — no explicit call needed. The hook (in a repo's `.claude/`) pipes the plan to the CLI:
+
+```bash
+printf '%s' "$plan" | uv run --directory <Quorum> main.py --plan - --expectations <docs>
+```
+
+If the queue has anything that needs a human, the hook **denies** `ExitPlanMode` with the queue as the reason, so Claude raises those clarifications with the user before re-presenting. It hash-guards per session to avoid loops, auto-uses the repo's `.quorum/expectations/` if present, and fails open. `main.py` gained `--plan` (file or `-` for stdin) and `--expectations` for exactly this; status prints go to stderr so stdout is just the queue.
+
 ---
 
 ## Project structure
@@ -187,12 +212,15 @@ run_agent.py         Run one specialist in isolation
 smoke_test.py        One-shot W&B connection check
 quorum_mcp.py        Local MCP server (review_plan tool) for Claude Code
 .mcp.json            Registers the MCP server (project scope)
+jira_server.py       Dummy Jira-shaped server (Starlette) — serves jira_fixtures.json
+jira_fixtures.json   Demo tickets as Jira issues (AUTH-101..104)
 
 agents/
   risk.py            Risk specialist (prompt + call)
   edgecase.py        EdgeCase specialist
   expectation.py     Requirement Farmer + Expectation act-stage (farm → act, proposes fixes)
   arbiter.py         Arbiter (reconciliation)
+  jira_source.py     Jira fetch adapter (issues → {key: text} for the farm-stage)
   llm.py             Shared async client, JSON extraction, output coercion, RE-EVALUATION prompt
   schemas.py         Data contracts (Requirement / Finding / AgentOutput / ReevalRequest / ArbiterOutput)
 
@@ -248,7 +276,8 @@ Every specialist emits the same shape; `plan_section` is the join key the arbite
 - ✅ **Bounded confidence loop** — arbiter-routed re-evaluation, up to 3 rounds, stops on stability (`config.MAX_ROUNDS`); final-round commit enforced in code
 - ✅ **Destructive-op safety** — guardrail (no silent auto-clear) + authorization backstop (escalate any clear without a verifiable doc citation)
 - ✅ **Expectation reasoning flow** — farm (verified requirements) → act (judge + propose fixes); fixes stitched onto surfaced items in code
-- ✅ **Claude Code integration** — local MCP server (`quorum_mcp.py`, `review_plan` tool); Claude calls it on a plan and surfaces the decision queue
+- ✅ **Claude Code integration** — (1) local MCP server (`quorum_mcp.py`, `review_plan` tool) for explicit calls; (2) optional `ExitPlanMode` hook for hands-off auto-review on every plan (`main.py --plan -`)
+- ✅ **Pluggable requirement source** — `local` (`.md` files) or `jira` (dummy Jira-shaped server); the farm-stage fetches via `resolve_expectations`, parity verified
 - ✅ Cross-agent merge, context-based suppression, finding compression
 - ✅ Nested Weave tracing (logging live) + per-round iteration lifecycle in `QUORUM_DEBUG`
 - ✅ Crash-proof JSON parsing + per-agent failure isolation

@@ -15,14 +15,34 @@ the specific cross-context the arbiter chooses to route to them.
 
 import asyncio
 import re
+from pathlib import Path
 
 import config
 from agents.arbiter import run_arbiter
 from agents.edgecase import run_edgecase_agent
 from agents.expectation import run_expectation_agent, run_requirement_farmer
+from agents.jira_source import fetch_jira_expectations
 from agents.risk import run_risk_agent
 from agents.schemas import AgentOutput, ReevalRequest, Requirements
 from tracing import op
+
+
+def _load_local_expectations(directory: str) -> dict[str, str]:
+    return {
+        p.name: p.read_text(encoding="utf-8")
+        for p in sorted(Path(directory).glob("*.md"))
+    }
+
+
+async def resolve_expectations() -> dict[str, str]:
+    """The farm-stage's data step: fetch requirements from the configured source.
+
+    "jira" pulls issues from the Jira-shaped server; "local" reads the .md docs.
+    Both return the same {key: text} dict the farmer (and the auth backstop) use.
+    """
+    if config.EXPECTATIONS_SOURCE == "jira":
+        return await fetch_jira_expectations(config.JIRA_BASE_URL, config.JIRA_PROJECT)
+    return _load_local_expectations(config.EXPECTATIONS_DIR)
 
 
 def _section_key(s: str) -> str:
@@ -196,7 +216,12 @@ def _attach_proposed_fixes(arbiter: dict, expectation: AgentOutput) -> dict:
 
 
 @op
-async def run_quorum(plan: str, expectations: dict[str, str]) -> dict:
+async def run_quorum(plan: str, expectations: dict[str, str] | None = None) -> dict:
+    # Resolve the expectation source (local files or Jira) unless docs were
+    # passed in explicitly (e.g. the MCP tool with an expectations_dir).
+    if expectations is None:
+        expectations = await resolve_expectations()
+
     # Farm verified requirements once, up front — the cited artifact the
     # Expectation act-stage judges the plan against (round 1 and every re-eval).
     requirements = await run_requirement_farmer(expectations)
