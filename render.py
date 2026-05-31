@@ -21,6 +21,8 @@ def render_decision_queue(arbiter: ArbiterOutput) -> str:
                 f"{i}. [{d['severity']}] {d['issue']} — {d['why_you']} "
                 f"(plan: {d['plan_section']})"
             )
+            if d.get("proposed_fix"):
+                lines.append(f"   → proposed fix: {d['proposed_fix']}")
 
     lines.append("")
 

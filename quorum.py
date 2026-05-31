@@ -19,9 +19,9 @@ import re
 import config
 from agents.arbiter import run_arbiter
 from agents.edgecase import run_edgecase_agent
-from agents.expectation import run_expectation_agent
+from agents.expectation import run_expectation_agent, run_requirement_farmer
 from agents.risk import run_risk_agent
-from agents.schemas import AgentOutput, ReevalRequest
+from agents.schemas import AgentOutput, ReevalRequest, Requirements
 from tracing import op
 
 
@@ -76,7 +76,7 @@ async def _rerun_agent(
     agent_name: str,
     requests: list[ReevalRequest],
     plan: str,
-    expectations: dict[str, str],
+    requirements: Requirements,
 ) -> AgentOutput:
     """Re-invoke one specialist with the arbiter's routed context."""
     ctx = _build_reeval_block(requests)
@@ -84,7 +84,7 @@ async def _rerun_agent(
         return await run_risk_agent(plan, ctx)
     if agent_name == "EdgeCase":
         return await run_edgecase_agent(plan, ctx)
-    return await run_expectation_agent(plan, expectations, ctx)
+    return await run_expectation_agent(plan, requirements, ctx)
 
 
 def _guardrail_requests(
@@ -171,13 +171,41 @@ def _enforce_destructive_authorization(
     }
 
 
+def _attach_proposed_fixes(arbiter: dict, expectation: AgentOutput) -> dict:
+    """Stitch each surfaced item's proposed_fix from the originating Expectation
+    finding, matched by plan_section.
+
+    Done in code (not via the arbiter) so a concrete fix can't be lost or mangled
+    in reconciliation — same robustness pattern as the authorization backstop.
+    """
+    fixes = {
+        _section_key(f["plan_section"]): f["proposed_fix"]
+        for f in expectation["findings"]
+        if f.get("proposed_fix")
+    }
+    if not fixes:
+        return arbiter
+    needs = []
+    for d in arbiter.get("needs_decision", []):
+        # Only attach to items Expectation actually raised — a different agent's
+        # finding at the same step shouldn't inherit Expectation's fix.
+        eligible = "Expectation" in d.get("source_agents", [])
+        fix = fixes.get(_section_key(d["plan_section"])) if eligible else None
+        needs.append({**d, "proposed_fix": fix} if fix else d)
+    return {**arbiter, "needs_decision": needs}
+
+
 @op
 async def run_quorum(plan: str, expectations: dict[str, str]) -> dict:
+    # Farm verified requirements once, up front — the cited artifact the
+    # Expectation act-stage judges the plan against (round 1 and every re-eval).
+    requirements = await run_requirement_farmer(expectations)
+
     # Round 1: full fan-out — three narrow specialists in parallel.
     risk, edgecase, expectation = await asyncio.gather(
         run_risk_agent(plan),
         run_edgecase_agent(plan),
-        run_expectation_agent(plan, expectations),
+        run_expectation_agent(plan, requirements),
     )
     findings = {"Risk": risk, "EdgeCase": edgecase, "Expectation": expectation}
     reevaluated: set[str] = set()  # sections that have had their forced second look
@@ -205,7 +233,7 @@ async def run_quorum(plan: str, expectations: dict[str, str]) -> dict:
         # Re-run only the targeted specialists, in parallel, with routed context.
         names = list(by_agent.keys())
         outs = await asyncio.gather(
-            *(_rerun_agent(a, by_agent[a], plan, expectations) for a in names)
+            *(_rerun_agent(a, by_agent[a], plan, requirements) for a in names)
         )
 
         # Merge revised findings back (targeted sections only).
@@ -228,11 +256,14 @@ async def run_quorum(plan: str, expectations: dict[str, str]) -> dict:
 
     # Backstop: escalate any cleared destructive op without a verifiable citation.
     arbiter = _enforce_destructive_authorization(arbiter, findings["Risk"], expectations)
+    # Stitch concrete fixes onto surfaced items from the Expectation findings.
+    arbiter = _attach_proposed_fixes(arbiter, findings["Expectation"])
 
     return {
         "risk": findings["Risk"],
         "edgecase": findings["EdgeCase"],
         "expectation": findings["Expectation"],
+        "requirements": requirements,
         "arbiter": arbiter,
         "rounds": round_num,
         "history": history,

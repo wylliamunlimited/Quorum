@@ -95,12 +95,16 @@ def coerce_agent_output(data: dict) -> dict:
         if not isinstance(f, dict):
             continue
         sev = str(f.get("severity", "med")).lower().strip()
-        findings_out.append({
+        finding = {
             "severity": _SEVERITY.get(sev, "med"),
             "issue": str(f.get("issue", "")).strip(),
             "plan_section": str(f.get("plan_section", "")).strip(),
             "why": str(f.get("why", "")).strip(),
-        })
+        }
+        fix = str(f.get("proposed_fix", "")).strip()
+        if fix:  # optional — only the Expectation act-stage emits it today
+            finding["proposed_fix"] = fix
+        findings_out.append(finding)
     return {"findings": findings_out}
 
 

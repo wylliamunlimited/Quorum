@@ -33,10 +33,13 @@ The reconciliation is the "why multi-agent": e.g. Risk flags a `DROP TABLE` as d
 |---|---|---|---|
 | **Risk** | Destructive / irreversible operations (drops, force-push, data overwrites). | Llama-3.3-70B | plan |
 | **EdgeCase** | Unhandled inputs / states / failure modes. | Llama-3.3-70B | plan |
-| **Expectation** | Where the plan contradicts or ignores the product docs. Bridges technical steps → user wants. | Llama-3.3-70B | plan **+ docs** |
-| **Arbiter** | Reconciles all 3 into the decision queue (suppress/keep/escalate). | DeepSeek-V3.1 | all findings + plan + docs |
+| **Requirement Farmer** | Distil the docs into a verified list of "what people want" (plan-independent). | Llama-3.3-70B | docs |
+| **Expectation** | Judge the plan against each farmed requirement; for violations emit a **proposed fix**. | Llama-3.3-70B | plan **+ requirements** |
+| **Arbiter** | Reconciles all findings into the decision queue (suppress/keep/escalate/re-evaluate). | DeepSeek-V3.1 | all findings + plan + docs |
 
 Each specialist prompt enforces: a one-line role, hard exclusions ("you do NOT do X, another agent owns it"), labeled inputs, JSON-only output, and an anti-confabulation clause ("return empty if nothing found; do not invent issues").
+
+**Expectation is a two-stage reasoning flow** (`farm → act`): the Farmer extracts verified requirements as a cited artifact, then the act-stage judges the plan against them and proposes grounded fixes. Separating *establish the fact* from *act on it* — and forcing the act-stage to cite the farmed requirement — improves accuracy and coverage. See [Reasoning flow](#reasoning-flow-expectation--farm--act).
 
 ---
 
@@ -47,14 +50,16 @@ The product is short by design — a user should grasp what needs them in under 
 ```
 ## Needs your decision (5)
 1. [high] Dropping users table will delete all beta accounts, violating AUTH-103 — ... (plan: step 2)
+   → proposed fix: alter the existing users table instead of dropping it
 2. [high] SHA-256 password hashing violates modern security standard (AUTH-101) — ... (plan: step 4)
+   → proposed fix: replace SHA-256 with bcrypt (work factor ≥ 12)
 ...
 
 ## Auto-cleared (5)
 5 items checked out across EdgeCase / Risk.
 ```
 
-- **`needs_decision`** — surfaced, one line each. `disposition` is `keep` (genuine issue) or `escalate` (high-stakes + contested/unauthorized).
+- **`needs_decision`** — surfaced, one line each. `disposition` is `keep` (genuine issue) or `escalate` (high-stakes + contested/unauthorized). Items Expectation raised also carry a **`→ proposed fix:`** line — a concrete change the human can approve.
 - **`auto_cleared`** — collapsed to a single line. Real findings the arbiter resolved for you (authorized by docs, neutralized by another agent, or minor). Each keeps a `reason` you can inspect with `QUORUM_DEBUG=1`.
 
 ---
@@ -87,6 +92,23 @@ step 3 (temp_tokens): contested round 1 (→ Expectation) → auto_cleared
 ```
 
 Run `QUORUM_DEBUG=1 uv run main.py` to see the per-round requests and this contested-item lifecycle; the nested rounds also show up in the Weave trace.
+
+---
+
+## Reasoning flow: Expectation = farm → act
+
+Expectation is a two-stage mini-pipeline, not a single call — a small "network within the network":
+
+```
+docs ──► Requirement Farmer ──► [verified requirements]
+                                       │ (cited artifact)
+plan ──────────────────────────────────┼──► Expectation act-stage ──► findings + proposed_fix
+```
+
+- **Farm** (`run_requirement_farmer`, docs-only): distil the docs into atomic, sourced requirements — *"what do people want"* — independent of the plan. Farmed once, up front in `run_quorum`.
+- **Act** (`run_expectation_agent`): judge the plan against each requirement; for violations emit a finding with a concrete **`proposed_fix`** that cites the requirement (e.g. *AUTH-101 → "replace SHA-256 with bcrypt, work factor ≥ 12"*).
+
+**Why it improves accuracy:** separating *establish a verified fact* from *act on it* — and forcing the act-stage to cite the farmed requirement — constrains the judgment to a checkable premise (the same principle as the authorization backstop). Judging *per requirement* also improves coverage. The **proposed fix** is stitched onto the surfaced item in code (`_attach_proposed_fixes`, matched by `plan_section` and gated to Expectation-raised items) so it can't be lost or mis-paired in reconciliation.
 
 ---
 
@@ -126,6 +148,33 @@ Each `main.py` run prints a live **Weave trace** URL — the nested view of `3 s
 
 ---
 
+## Use from Claude Code (MCP)
+
+Quorum runs as a local MCP server (`quorum_mcp.py`) exposing one tool, **`review_plan`**, so Claude Code can review a plan it drafts and surface the clarifications before you approve:
+
+```
+Claude drafts a plan ──► review_plan(plan, expectations_dir?) ──► "Needs your decision (N)" + proposed fixes ──► Claude asks you
+```
+
+Quorum still runs its own W&B agents — Claude Code is the **caller**, not the reviewer.
+
+**This repo (project scope):** `.mcp.json` already registers the server. Start `claude` here and approve the `quorum` server when prompted; then ask Claude to review a plan.
+
+**Any repo (user scope):**
+```bash
+claude mcp add quorum -- uv run --directory /Users/wylliamcheng/Desktop/directories/Quorum quorum_mcp.py
+```
+Pass that repo's own docs via `expectations_dir` (e.g. `.quorum/expectations`); it defaults to Quorum's bundled `inputs/expectations/`.
+
+**Test without Claude Code:** `uv run mcp dev quorum_mcp.py` (MCP Inspector), or call the tool directly:
+```bash
+uv run python -c "import asyncio; from quorum_mcp import review_plan; from main import load_plan; print(asyncio.run(review_plan(load_plan())))"
+```
+
+> A full review is ~30–90s (farm + panel + re-eval rounds) — fine for a prototype; a single-pass `fast` mode is a noted follow-up.
+
+---
+
 ## Project structure
 
 ```
@@ -136,14 +185,16 @@ config.py            Model IDs, W&B entity slug, paths (auto-loads .env)
 tracing.py           Optional Weave wrapper (@op decorator + init; no-op if absent)
 run_agent.py         Run one specialist in isolation
 smoke_test.py        One-shot W&B connection check
+quorum_mcp.py        Local MCP server (review_plan tool) for Claude Code
+.mcp.json            Registers the MCP server (project scope)
 
 agents/
   risk.py            Risk specialist (prompt + call)
   edgecase.py        EdgeCase specialist
-  expectation.py     Expectation specialist (takes docs)
+  expectation.py     Requirement Farmer + Expectation act-stage (farm → act, proposes fixes)
   arbiter.py         Arbiter (reconciliation)
   llm.py             Shared async client, JSON extraction, output coercion, RE-EVALUATION prompt
-  schemas.py         Data contracts (Finding / AgentOutput / ReevalRequest / ArbiterOutput)
+  schemas.py         Data contracts (Requirement / Finding / AgentOutput / ReevalRequest / ArbiterOutput)
 
 inputs/
   plan.md            Demo plan (8-step auth feature with planted issues)
@@ -196,6 +247,8 @@ Every specialist emits the same shape; `plan_section` is the join key the arbite
 - ✅ Full pipeline: 3 parallel specialists → arbiter → rendered queue, all on real W&B Inference models
 - ✅ **Bounded confidence loop** — arbiter-routed re-evaluation, up to 3 rounds, stops on stability (`config.MAX_ROUNDS`); final-round commit enforced in code
 - ✅ **Destructive-op safety** — guardrail (no silent auto-clear) + authorization backstop (escalate any clear without a verifiable doc citation)
+- ✅ **Expectation reasoning flow** — farm (verified requirements) → act (judge + propose fixes); fixes stitched onto surfaced items in code
+- ✅ **Claude Code integration** — local MCP server (`quorum_mcp.py`, `review_plan` tool); Claude calls it on a plan and surfaces the decision queue
 - ✅ Cross-agent merge, context-based suppression, finding compression
 - ✅ Nested Weave tracing (logging live) + per-round iteration lifecycle in `QUORUM_DEBUG`
 - ✅ Crash-proof JSON parsing + per-agent failure isolation
@@ -206,8 +259,8 @@ Every specialist emits the same shape; `plan_section` is the join key the arbite
 - ❌ Tests
 
 **Known weak spots:**
-- ⚠️ Arbiter trends escalate-happy on minor edge cases since the loop prompts were added, growing the queue (e.g. 5 → 8 items) — a **severity-calibration** tuning target in `agents/arbiter.py`, against the "less to read" goal
-- ⚠️ Run-to-run variance from the arbiter model even at `temperature=0` — the loop dampens it but the queue can still wobble
+- ⚠️ **Arbiter severity calibration is unstable** — run-to-run it swings between escalate-happy (queue grows to ~8–9 items, including minor edge cases) and over-clearing (it has auto-cleared real AUTH-101/102 violations). The farm→act split made Expectation's *findings* sharper, but the *arbiter's* reconciliation is the volatile layer. Top tuning target in `agents/arbiter.py`.
+- ⚠️ Run-to-run variance from the arbiter model even at `temperature=0` — the loop dampens it but the queue can still wobble.
 
 ---
 

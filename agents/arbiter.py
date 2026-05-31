@@ -115,14 +115,18 @@ def _coerce(data: dict, drop_reeval: bool = False) -> ArbiterOutput:
         sev = str(d.get("severity", "med")).lower().strip()
         disp = d.get("disposition", "keep")
         agents = d.get("source_agents", [])
-        needs.append({
+        item = {
             "severity": _SEVERITY.get(sev, "med"),
             "issue": str(d.get("issue", "")).strip(),
             "why_you": str(d.get("why_you", d.get("why", ""))).strip(),
             "plan_section": str(d.get("plan_section", "")).strip(),
             "source_agents": agents if isinstance(agents, list) else [],
             "disposition": disp if disp in ("keep", "escalate") else "keep",
-        })
+        }
+        fix = str(d.get("proposed_fix", "")).strip()
+        if fix:  # the orchestrator stitches the authoritative fix; keep any echo
+            item["proposed_fix"] = fix
+        needs.append(item)
 
     cleared = []
     for c in ac:

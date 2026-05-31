@@ -44,6 +44,8 @@ def main() -> None:
         print("\n" + "=" * 70)
         print("DEBUG — raw agent findings (pre-arbiter)")
         print("=" * 70)
+        print("\n[requirements] farmed from the docs (feeds Expectation)")
+        print(json.dumps(result.get("requirements", []), indent=2))
         for agent in ("risk", "edgecase", "expectation"):
             print(f"\n[{agent}]")
             print(json.dumps(result[agent], indent=2))

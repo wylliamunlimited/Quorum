@@ -6,7 +6,8 @@ arbiter (still a stub) hiding the output.
 Usage:
   uv run run_agent.py risk
   uv run run_agent.py edgecase
-  uv run run_agent.py expectation
+  uv run run_agent.py requirements   # the farmed requirements artifact
+  uv run run_agent.py expectation    # farms first, then judges + proposes fixes
 """
 
 import asyncio
@@ -15,7 +16,7 @@ import sys
 
 from main import load_expectations, load_plan
 from agents.edgecase import run_edgecase_agent
-from agents.expectation import run_expectation_agent
+from agents.expectation import run_expectation_agent, run_requirement_farmer
 from agents.risk import run_risk_agent
 
 
@@ -28,10 +29,16 @@ async def main() -> None:
         out = await run_risk_agent(plan)
     elif which == "edgecase":
         out = await run_edgecase_agent(plan)
+    elif which == "requirements":
+        out = await run_requirement_farmer(docs)
     elif which == "expectation":
-        out = await run_expectation_agent(plan, docs)
+        requirements = await run_requirement_farmer(docs)  # farm -> act
+        out = await run_expectation_agent(plan, requirements)
     else:
-        raise SystemExit(f"unknown agent '{which}' (use: risk | edgecase | expectation)")
+        raise SystemExit(
+            f"unknown agent '{which}' "
+            "(use: risk | edgecase | requirements | expectation)"
+        )
 
     print(json.dumps(out, indent=2))
 

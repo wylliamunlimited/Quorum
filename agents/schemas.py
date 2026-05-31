@@ -11,12 +11,27 @@ Severity = Literal["high", "med", "low"]
 AgentName = Literal["Risk", "EdgeCase", "Expectation"]
 
 
+class Requirement(TypedDict):
+    """One verified product requirement farmed from the docs (plan-independent).
+
+    The "what do people want" artifact: the Expectation farm-stage extracts these,
+    and its act-stage judges the plan against them, citing the source.
+    """
+    source: str         # e.g. "AUTH-101" or "meeting-notes"
+    requirement: str    # the verified want, in plain terms
+
+
+Requirements = list[Requirement]
+
+
 class Finding(TypedDict):
     """One issue flagged by a specialist agent."""
     severity: Severity
     issue: str          # one-line description
     plan_section: str   # e.g. "step 2" — the join key the arbiter aligns on
     why: str            # why it matters, in the agent's own narrow lens
+    # A concrete suggested change (Expectation act-stage only, for now).
+    proposed_fix: NotRequired[str]
 
 
 class AgentOutput(TypedDict):
@@ -31,6 +46,8 @@ class Decision(TypedDict):
     plan_section: str
     source_agents: list[str]   # which agent(s) raised it
     disposition: Literal["keep", "escalate"]
+    # Stitched in by the orchestrator from the originating Expectation finding.
+    proposed_fix: NotRequired[str]
 
 
 class Cleared(TypedDict):
