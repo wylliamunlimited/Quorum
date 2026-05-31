@@ -5,7 +5,7 @@ identical to the old stub, so quorum.py / render.py / main.py are untouched.
 """
 
 import config
-from agents.llm import chat, coerce_agent_output, extract_json
+from agents.llm import REEVAL_INSTRUCTION, chat, coerce_agent_output, extract_json
 from agents.schemas import AgentOutput
 from tracing import op
 
@@ -41,12 +41,14 @@ Output ONLY a JSON object in exactly this shape, nothing before or after:
 
 If the plan contains NO destructive or irreversible operations, return \
 {"findings":[]}. Do not invent issues to seem useful. Every finding must point \
-to a specific operation that actually appears in the plan."""
+to a specific operation that actually appears in the plan.""" + REEVAL_INSTRUCTION
 
 
 @op
-async def run_risk_agent(plan: str) -> AgentOutput:
+async def run_risk_agent(plan: str, context: str | None = None) -> AgentOutput:
     user = f"PLAN:\n{plan}"
+    if context:
+        user += f"\n\n{context}"
     raw = await chat(config.RISK_MODEL, SYSTEM_PROMPT, user, temperature=0)
     try:
         return coerce_agent_output(extract_json(raw))

@@ -24,6 +24,11 @@ EDGECASE_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
 EXPECTATION_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
 ARBITER_MODEL = "deepseek-ai/DeepSeek-V3.1"
 
+# --- Iteration ------------------------------------------------------------
+# Max rounds of the confidence loop. The arbiter must commit (no more re-eval
+# requests) on the final round; the orchestrator enforces the same cap in code.
+MAX_ROUNDS = 3
+
 # --- Input paths ----------------------------------------------------------
 PLAN_PATH = "inputs/plan.md"
 EXPECTATIONS_DIR = "inputs/expectations"

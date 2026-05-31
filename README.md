@@ -14,11 +14,13 @@ When a coding agent emits a plan, people skim it, fatigue, and rubber-stamp — 
                     ┌─→ Risk agent ────────┐
 inputs/plan.md ─────┼─→ EdgeCase agent ────┼─→ Arbiter ──→ Decision queue
 inputs/expectations/┴─→ Expectation agent ─┘   (reconciles)   (short markdown)
-   (Expectation only)
+   (Expectation only)        ↑__________________│
+                         routed re-evaluation (up to 3 rounds)
 ```
 
 - **3 specialists run in parallel**, each with one narrow job (and explicit exclusions so they don't overlap).
 - **The arbiter is the only agent that sees everything.** It cross-references the findings against each other and against the docs, then decides per finding: **suppress / keep / escalate**.
+- **It iterates.** When the arbiter is uncertain about an item, it routes a targeted question (plus the cross-context the specialist didn't see) *back* to one specialist for a second look, then re-reconciles — up to 3 rounds, stopping as soon as nothing is contested. See [The confidence loop](#the-confidence-loop).
 - The output is a **triaged queue**, not a document. Most findings auto-clear; only the contested ones surface.
 
 The reconciliation is the "why multi-agent": e.g. Risk flags a `DROP TABLE` as dangerous, but the meeting notes authorized it → the arbiter **suppresses** it. Identical operation elsewhere with no authorization → **escalate**. No single agent can make that call.
@@ -54,6 +56,37 @@ The product is short by design — a user should grasp what needs them in under 
 
 - **`needs_decision`** — surfaced, one line each. `disposition` is `keep` (genuine issue) or `escalate` (high-stakes + contested/unauthorized).
 - **`auto_cleared`** — collapsed to a single line. Real findings the arbiter resolved for you (authorized by docs, neutralized by another agent, or minor). Each keeps a `reason` you can inspect with `QUORUM_DEBUG=1`.
+
+---
+
+## The confidence loop
+
+Quorum doesn't decide everything in one shot — it iterates to make the triage *trustworthy*. The design (one coordinate in the iterative-multi-agent space):
+
+- **Dependency = arbiter-routed.** Specialists stay blind to each other. When the arbiter is uncertain about an item, it emits a `reeval_request` naming **one** target specialist, a question, and the cross-context that specialist never saw. Only the arbiter sees everything; dependency flows *through* it, so the panel keeps its independence (no groupthink).
+- **Target = confidence / triage stability.** Each round re-evaluates *only the contested items*; the `reeval_requests` list **is** the contested set. Converge when it's empty.
+- **Stop rule = stability, hard cap 3 rounds** (`config.MAX_ROUNDS`). The final round forces a commit — enforced in code (`drop_reeval`), not just the prompt, so the loop physically cannot run away.
+
+```
+Round 1: 3 specialists → arbiter → {verdicts, reeval_requests}
+   while contested and round < 3:
+Round n: re-run ONLY targeted specialists (with routed context) → re-reconcile
+   → converge (no requests) or hit the cap → commit
+```
+
+**Two safety guarantees on destructive operations** (because the arbiter, left alone, was overconfident — it auto-cleared an *unauthorized* force-push as "no doc forbids it"):
+
+1. **Guardrail (orchestrator):** a destructive op may not be *silently* auto-cleared. Every destructive auto-clear gets exactly one forced second look — this is what reliably fires the loop.
+2. **Authorization backstop (orchestrator):** to clear a destructive op the arbiter must cite a real `authorized_by` doc/note; any destructive clear whose citation doesn't verify against the actual docs is **escalated by policy**. Safety property: *no irreversible action is auto-dismissed without authorization on record.*
+
+The result is the demo's money-shot — same operation type, opposite outcomes, decided by the docs:
+
+```
+step 8 (force-push):  contested round 1 (→ Expectation) → needs_decision / escalate
+step 3 (temp_tokens): contested round 1 (→ Expectation) → auto_cleared
+```
+
+Run `QUORUM_DEBUG=1 uv run main.py` to see the per-round requests and this contested-item lifecycle; the nested rounds also show up in the Weave trace.
 
 ---
 
@@ -96,8 +129,8 @@ Each `main.py` run prints a live **Weave trace** URL — the nested view of `3 s
 ## Project structure
 
 ```
-main.py              Entrypoint: load inputs → run_quorum → print queue (+ QUORUM_DEBUG dump)
-quorum.py            Orchestrator: asyncio fan-out (3 specialists) → arbiter
+main.py              Entrypoint: load inputs → run_quorum → print queue (+ QUORUM_DEBUG dump & iteration lifecycle)
+quorum.py            Orchestrator: bounded confidence loop (fan-out → arbiter → re-eval rounds) + destructive-op guardrails
 render.py            Arbiter JSON → decision-queue markdown
 config.py            Model IDs, W&B entity slug, paths (auto-loads .env)
 tracing.py           Optional Weave wrapper (@op decorator + init; no-op if absent)
@@ -109,8 +142,8 @@ agents/
   edgecase.py        EdgeCase specialist
   expectation.py     Expectation specialist (takes docs)
   arbiter.py         Arbiter (reconciliation)
-  llm.py             Shared async client, JSON extraction, output coercion
-  schemas.py         Data contracts (Finding / AgentOutput / ArbiterOutput)
+  llm.py             Shared async client, JSON extraction, output coercion, RE-EVALUATION prompt
+  schemas.py         Data contracts (Finding / AgentOutput / ReevalRequest / ArbiterOutput)
 
 inputs/
   plan.md            Demo plan (8-step auth feature with planted issues)
@@ -130,7 +163,9 @@ Every specialist emits the same shape; `plan_section` is the join key the arbite
 | To change… | Edit |
 |---|---|
 | What an agent looks for / its exclusions | `agents/<agent>.py` → `SYSTEM_PROMPT` |
-| Reconciliation rules (suppress/keep/escalate) | `agents/arbiter.py` → `SYSTEM_PROMPT` |
+| Reconciliation rules (suppress/keep/escalate/re-evaluate) | `agents/arbiter.py` → `SYSTEM_PROMPT` |
+| Round cap / loop behavior | `config.MAX_ROUNDS`; loop in `quorum.py` |
+| Destructive-op safety (guardrail + authorization backstop) | `quorum.py` → `_guardrail_requests`, `_enforce_destructive_authorization` |
 | Models | `config.py` |
 | The plan / docs under test | `inputs/plan.md`, `inputs/expectations/*.md` |
 | Output format | `render.py` |
@@ -149,9 +184,9 @@ Every specialist emits the same shape; `plan_section` is the join key the arbite
 | 3 — drop `temp_tokens` | destructive | Risk | meeting notes authorize | **suppress** |
 | 4 — SHA-256 passwords | contradicts requirement | Expectation | AUTH-101 wants modern standard | keep |
 | 6 — non-expiring JWT | contradicts requirement | Expectation | AUTH-102 wants ~24h | keep |
-| 8 — force-push to `main` | destructive/irreversible | Risk | — | escalate* |
+| 8 — force-push to `main` | destructive/irreversible | Risk | — (nothing authorizes it) | escalate* |
 
-\* The arbiter occasionally auto-clears the force-push ("no explicit prohibition") instead of escalating — a known prompt-tuning target (see Status).
+\* DeepSeek alone is overconfident and auto-clears the force-push ("no doc forbids it"). The [confidence loop](#the-confidence-loop) fixes this: step 8 is contested in round 1, re-evaluated, and escalated by the authorization backstop (no citable doc) — while step 3 stays suppressed because the meeting notes authorize it.
 
 ---
 
@@ -159,23 +194,26 @@ Every specialist emits the same shape; `plan_section` is the join key the arbite
 
 **Implemented & verified end-to-end:**
 - ✅ Full pipeline: 3 parallel specialists → arbiter → rendered queue, all on real W&B Inference models
+- ✅ **Bounded confidence loop** — arbiter-routed re-evaluation, up to 3 rounds, stops on stability (`config.MAX_ROUNDS`); final-round commit enforced in code
+- ✅ **Destructive-op safety** — guardrail (no silent auto-clear) + authorization backstop (escalate any clear without a verifiable doc citation)
 - ✅ Cross-agent merge, context-based suppression, finding compression
-- ✅ Nested Weave tracing (logging live)
+- ✅ Nested Weave tracing (logging live) + per-round iteration lifecycle in `QUORUM_DEBUG`
 - ✅ Crash-proof JSON parsing + per-agent failure isolation
-- ✅ Demo inputs with planted, catchable conflicts
+- ✅ Demo inputs with planted, catchable conflicts (force-push now reliably escalates)
 
 **Not yet implemented:**
-- ❌ Stretch goal: arbiter sends a finding *back* to an agent to re-evaluate (cyclic flow — likely LangGraph)
 - ❌ CLI args (plan path hardcoded to `inputs/plan.md`)
 - ❌ Tests
 
 **Known weak spots:**
-- ⚠️ Arbiter sometimes auto-clears unauthorized destructive ops (force-push) — tighten `agents/arbiter.py` so unauthorized destructive ops default to escalate
-- ⚠️ Run-to-run variance from the arbiter model even at `temperature=0`
+- ⚠️ Arbiter trends escalate-happy on minor edge cases since the loop prompts were added, growing the queue (e.g. 5 → 8 items) — a **severity-calibration** tuning target in `agents/arbiter.py`, against the "less to read" goal
+- ⚠️ Run-to-run variance from the arbiter model even at `temperature=0` — the loop dampens it but the queue can still wobble
 
 ---
 
 ## Notes / decisions
 
-- **Orchestration is plain `asyncio`, not LangGraph.** For a linear "3 → 1" flow, `asyncio.gather` is the fan-out and Weave provides the lineage; LangGraph would only earn its place for the cyclic stretch goal.
+- **Orchestration is plain `asyncio`, not LangGraph** — including the cyclic re-evaluation loop. `asyncio.gather` is the fan-out, a `while` loop drives the rounds, and Weave provides the lineage. LangGraph would only earn its place for a more complex graph (many node types, conditional branching beyond this single routed loop).
+- **Dependency is arbiter-routed, not peer-to-peer.** Chosen deliberately over a peer-visible "mesh" to preserve the specialists' independence (the asset that makes the panel worth having). The arbiter is the single router.
+- **Destructive ops get a code-enforced safety net.** The arbiter (DeepSeek) was overconfident about an unauthorized force-push, and prompting alone didn't fix it. So clearing a destructive op now requires a *verifiable* `authorized_by` citation; the orchestrator escalates anything that doesn't check out. Confidence isn't left entirely to the model's judgment on irreversible actions.
 - **Model catalog drifts.** The original spec's `DeepSeek-V3-0324` / `Llama-4-Scout` are gone from W&B; the arbiter now runs on `DeepSeek-V3.1`. Check `config.py` against the live catalog if a call 404s.

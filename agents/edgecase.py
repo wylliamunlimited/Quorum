@@ -5,7 +5,7 @@ Same recipe as Risk: narrow role + hard exclusions + JSON-only + anti-confab.
 """
 
 import config
-from agents.llm import chat, coerce_agent_output, extract_json
+from agents.llm import REEVAL_INSTRUCTION, chat, coerce_agent_output, extract_json
 from agents.schemas import AgentOutput
 from tracing import op
 
@@ -36,12 +36,14 @@ Output ONLY a JSON object in exactly this shape, nothing before or after:
 
 If the plan handles its edge cases (or there are none to find), return \
 {"findings":[]}. Do not invent issues to seem useful. Every finding must point \
-to a specific gap implied by the plan."""
+to a specific gap implied by the plan.""" + REEVAL_INSTRUCTION
 
 
 @op
-async def run_edgecase_agent(plan: str) -> AgentOutput:
+async def run_edgecase_agent(plan: str, context: str | None = None) -> AgentOutput:
     user = f"PLAN:\n{plan}"
+    if context:
+        user += f"\n\n{context}"
     raw = await chat(config.EDGECASE_MODEL, SYSTEM_PROMPT, user, temperature=0)
     try:
         return coerce_agent_output(extract_json(raw))

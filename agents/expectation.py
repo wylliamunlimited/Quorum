@@ -8,7 +8,7 @@ violates a want, even when the plan never names that want.
 """
 
 import config
-from agents.llm import chat, coerce_agent_output, extract_json
+from agents.llm import REEVAL_INSTRUCTION, chat, coerce_agent_output, extract_json
 from agents.schemas import AgentOutput
 from tracing import op
 
@@ -46,15 +46,19 @@ Output ONLY a JSON object in exactly this shape, nothing before or after:
 {"findings":[{"severity":"high|med|low","issue":"<one line>","plan_section":"step <N>","why":"<one sentence citing the doc/want it violates>"}]}
 
 If the plan satisfies every stated want, return {"findings":[]}. Do not invent \
-issues to seem useful."""
+issues to seem useful.""" + REEVAL_INSTRUCTION
 
 
 @op
-async def run_expectation_agent(plan: str, expectations: dict[str, str]) -> AgentOutput:
+async def run_expectation_agent(
+    plan: str, expectations: dict[str, str], context: str | None = None
+) -> AgentOutput:
     docs = "\n\n".join(
         f"--- {name} ---\n{content}" for name, content in expectations.items()
     )
     user = f"PLAN:\n{plan}\n\nEXPECTATION DOCS:\n{docs}"
+    if context:
+        user += f"\n\n{context}"
     raw = await chat(config.EXPECTATION_MODEL, SYSTEM_PROMPT, user, temperature=0)
     try:
         return coerce_agent_output(extract_json(raw))
