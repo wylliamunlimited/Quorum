@@ -11,3 +11,6 @@ wheels/
 
 # Secrets — never commit the real key
 .env
+
+# Large demo video — hosted via GitHub user-attachments, not committed
+demo.mp4

@@ -8,6 +8,16 @@ When a coding agent emits a plan, people skim it, fatigue, and rubber-stamp — 
 
 ---
 
+## Demo
+
+▶️ **[Watch the demo](demo.mp4)**
+
+<!-- For an inline player on GitHub: drag demo.mp4 into a GitHub issue or release to
+     upload it, then paste the resulting https://github.com/user-attachments/assets/...
+     URL on its own line here (GitHub auto-renders it as a player). -->
+
+---
+
 ## The idea in one picture
 
 ```
