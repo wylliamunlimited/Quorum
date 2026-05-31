@@ -10,11 +10,12 @@ When a coding agent emits a plan, people skim it, fatigue, and rubber-stamp — 
 
 ## Demo
 
-▶️ **[Watch the demo](demo.mp4)**
+▶️ **[Watch the demo](https://drive.google.com/file/d/1q2V58fuh_0R5hBY4LLMxyhgyfmTGkWGu/view?usp=drive_link)**
 
-<!-- For an inline player on GitHub: drag demo.mp4 into a GitHub issue or release to
-     upload it, then paste the resulting https://github.com/user-attachments/assets/...
-     URL on its own line here (GitHub auto-renders it as a player). -->
+<!-- This is a click-through link (opens Google Drive). For an inline player on the
+     GitHub page itself, drag demo.mp4 into a GitHub issue or release to upload it,
+     then paste the resulting https://github.com/user-attachments/assets/... URL on
+     its own line here (GitHub auto-renders that as a player). -->
 
 ---
 
@@ -33,7 +34,7 @@ inputs/expectations/┴─→ Expectation agent ─┘   (reconciles)   (short m
 - **It iterates.** When the arbiter is uncertain about an item, it routes a targeted question (plus the cross-context the specialist didn't see) *back* to one specialist for a second look, then re-reconciles — up to 3 rounds, stopping as soon as nothing is contested. See [The confidence loop](#the-confidence-loop).
 - The output is a **triaged queue**, not a document. Most findings auto-clear; only the contested ones surface.
 
-The reconciliation is the "why multi-agent": e.g. Risk flags a `DROP TABLE` as dangerous, but the meeting notes authorized it → the arbiter **suppresses** it. Identical operation elsewhere with no authorization → **escalate**. No single agent can make that call.
+Reconciliation is what makes this multi-agent: e.g. Risk flags a `DROP TABLE` as dangerous, but the meeting notes authorized it → the arbiter **suppresses** it. Identical operation elsewhere with no authorization → **escalate**. No single agent can make that call.
 
 ---
 
@@ -150,7 +151,7 @@ Round n: re-run ONLY targeted specialists (with routed context) → re-reconcile
 1. **Guardrail (orchestrator):** a destructive op may not be *silently* auto-cleared. Every destructive auto-clear gets exactly one forced second look — this is what reliably fires the loop.
 2. **Authorization backstop (orchestrator):** to clear a destructive op the arbiter must cite a real `authorized_by` doc/note; any destructive clear whose citation doesn't verify against the actual docs is **escalated by policy**. Safety property: *no irreversible action is auto-dismissed without authorization on record.*
 
-The result is the demo's money-shot — same operation type, opposite outcomes, decided by the docs:
+Same operation type, opposite outcomes, decided by the docs:
 
 ```
 step 8 (force-push):  contested round 1 (→ Expectation) → needs_decision / escalate
@@ -225,7 +226,7 @@ QUORUM_DEBUG=1 uv run main.py
 uv run run_agent.py risk        # or: edgecase | expectation
 ```
 
-Each `main.py` run prints a live **Weave trace** URL — the nested view of `3 specialists → arbiter` is the demo centerpiece.
+Each `main.py` run prints a live **Weave trace** URL — a nested view of `3 specialists → arbiter`.
 
 ---
 
@@ -319,7 +320,7 @@ Every specialist emits the same shape; `plan_section` is the join key the arbite
 
 ---
 
-## Demo inputs (the planted answer key)
+## Demo inputs
 
 `inputs/plan.md` is an 8-step "add auth" plan seeded so the panel catches concrete things:
 
